@@ -30,7 +30,7 @@ def test_eval_grounding_fallback_citations():
     is_grounded, gap_topic, citations = eval_grounding(text, chunks)
     
     assert is_grounded is True
-    assert citations == ["chunk-99"]
+    assert citations == []
 
 
 def test_compose_response_never_leaks_grounding_gap():
@@ -66,4 +66,25 @@ def test_extract_name_from_text():
     assert extract_name_from_text("Call me Alexander now") == "Alexander"
     assert extract_name_from_text("What is my name?") is None
     assert extract_name_from_text("Explain Newton's second law") is None
+
+
+def test_eval_grounding_rejects_llm_provider_error():
+    text = "[LLM Error: Rate limit exceeded or API key invalid]"
+    chunks = [{"chunk_id": "abc-123"}]
+    is_grounded, gap_topic, citations = eval_grounding(text, chunks)
+
+    assert is_grounded is False
+    assert gap_topic == "LLM provider error"
+    assert citations == []
+
+
+def test_eval_grounding_rejects_invented_citations():
+    text = "Here is the answer based on [Chunk: fake-invented-id]."
+    chunks = [{"chunk_id": "real-chunk-100"}]
+    is_grounded, gap_topic, citations = eval_grounding(text, chunks)
+
+    assert is_grounded is False
+    assert "Invented citation" in gap_topic
+    assert citations == []
+
 

@@ -140,11 +140,19 @@ async def mobile_course_chat(
     full_response = "\n".join(content_parts) or "No response could be generated."
     sources = answer.cited_chunk_ids or []
     is_grounded = bool(answer.grounded_answer and answer.grounded_answer.strip())
-    
+    if getattr(answer, "confidence", 0.0) > 0:
+        confidence = answer.confidence
+    elif is_grounded and sources:
+        confidence = min(0.98, round(0.85 + (len(sources) * 0.04), 2))
+    elif is_grounded:
+        confidence = 0.80
+    else:
+        confidence = 0.50
+
     return {
         "data": {
             "response": full_response,
-            "confidence": 0.95 if is_grounded else 0.70,
+            "confidence": confidence,
             "sources": sources,
             "suggestions": answer.gaps_addressed or [],
             "cached": False,

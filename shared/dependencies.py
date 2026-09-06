@@ -16,17 +16,17 @@ from ingestion.chunkers import HeaderAwareChunker
 from ingestion.parsers import PyTesseractOCREngine
 from ingestion.repository import SQLAlchemyAssetRepository, SQLAlchemyVectorStore
 from tutor.repository import SQLAlchemyMessageRepository, SQLAlchemyGapRepository, SQLAlchemyStudentProfileRepository
-from tutor.llm import MockEmbedder, GeminiChatModel, MockChatModel
+import os
+from config import settings
+from tutor.llm import MockEmbedder, OpenAIEmbedder, GeminiEmbedder, GeminiChatModel, OpenAIChatModel, MockChatModel
 from tutor.service import TutorService
 
 # Global singletons for stateful/in-memory infrastructure
 _storage_instance = LocalStorage()
 _rate_limiter_instance = InMemoryRateLimiter()
 _cache_instance = InMemoryCache()
-_embedder_instance = MockEmbedder()
 _chunker_instance = HeaderAwareChunker()
 _ocr_instance = PyTesseractOCREngine()
-_chat_model_instance = GeminiChatModel()
 
 def get_storage() -> FileStorage:
     return _storage_instance
@@ -41,7 +41,13 @@ def get_file_storage() -> FileStorage:
     return _storage_instance
 
 def get_embedder() -> Embedder:
-    return _embedder_instance
+    openai_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+    gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+    if openai_key:
+        return OpenAIEmbedder(api_key=openai_key)
+    elif gemini_key:
+        return GeminiEmbedder(api_key=gemini_key)
+    return MockEmbedder()
 
 def get_chunker() -> ChunkingStrategy:
     return _chunker_instance
@@ -50,7 +56,14 @@ def get_ocr_engine() -> OCREngine:
     return _ocr_instance
 
 def get_chat_model() -> ChatModel:
-    return _chat_model_instance
+    openai_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+    gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+    if openai_key:
+        return OpenAIChatModel(api_key=openai_key)
+    elif gemini_key:
+        return GeminiChatModel(api_key=gemini_key)
+    return MockChatModel()
+
 
 def get_asset_repository(session: AsyncSession = Depends(get_db)) -> AssetRepository:
     return SQLAlchemyAssetRepository(session)

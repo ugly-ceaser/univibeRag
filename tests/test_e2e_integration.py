@@ -71,7 +71,7 @@ class InMemoryVectorStore(VectorStore):
                 "chunk_id": f"chunk-{len(self.chunks)}"
             })
 
-    async def search_chunks(self, query_vector: list[float], course_id: str, top_k: int = 6):
+    async def search_chunks(self, query_vector: list[float], course_id: str, student_id: str | None = None, top_k: int = 6):
         return [
             {"chunk_id": c["chunk_id"], "content": c["content"], "filename": "sample.md"}
             for c in self.chunks[:top_k]

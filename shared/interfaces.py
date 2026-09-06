@@ -41,6 +41,8 @@ class TutorAnswer:
     supplementary_answer: str | None = None
     cited_chunk_ids: list[str] = field(default_factory=list)
     gaps_addressed: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+
 
 
 @runtime_checkable
@@ -88,7 +90,7 @@ class AssetRepository(Protocol):
 @runtime_checkable
 class VectorStore(Protocol):
     async def upsert_chunks(self, asset_id: str, chunks_with_vectors: list[ChunkWithVector]) -> None: ...
-    async def search_chunks(self, query_vector: list[float], course_id: str, top_k: int = 6) -> list[dict[str, Any]]: ...
+    async def search_chunks(self, query_vector: list[float], course_id: str, student_id: str | None = None, top_k: int = 6) -> list[dict[str, Any]]: ...
     async def search_messages(self, query_vector: list[float], course_id: str, student_id: str, top_k: int = 3) -> list[dict[str, Any]]: ...
 
 

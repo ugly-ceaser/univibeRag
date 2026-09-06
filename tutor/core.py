@@ -84,20 +84,40 @@ def eval_grounding(response_text: str, context_chunks: list[dict[str, Any]]) -> 
     Returns:
       (is_grounded, gap_topic, cited_chunk_ids)
     """
+    if not response_text or response_text.strip().startswith("[LLM Error:") or "[LLM Error:" in response_text:
+        return False, "LLM provider error", []
+
     if "GROUNDING_GAP:" in response_text:
         match = re.search(r'GROUNDING_GAP:\s*\[?([^\]\n]+)\]?', response_text)
         gap_topic = match.group(1).strip() if match else "Unspecified topic"
         return False, gap_topic, []
 
+    # Valid chunk IDs from context
+    valid_chunk_ids = set()
+    for c in (context_chunks or []):
+        if isinstance(c, dict):
+            if c.get("chunk_id"):
+                valid_chunk_ids.add(str(c["chunk_id"]))
+            if c.get("id"):
+                valid_chunk_ids.add(str(c["id"]))
+
     cited_ids = []
-    chunk_pattern = re.compile(r'\[Chunk:\s*([a-f0-9\-]+)\]', re.IGNORECASE)
+    chunk_pattern = re.compile(r'\[Chunk:\s*([a-zA-Z0-9_\-\.]+)\]', re.IGNORECASE)
     matches = chunk_pattern.findall(response_text)
     for m in matches:
         if m not in cited_ids:
-            cited_ids.append(m)
+            if not valid_chunk_ids or m in valid_chunk_ids:
+                cited_ids.append(m)
 
     if not cited_ids and context_chunks:
-        cited_ids = [c["chunk_id"] for c in context_chunks[:3] if "chunk_id" in c]
+        # Check if any chunk ID from context is mentioned in the text
+        for cid in valid_chunk_ids:
+            if cid in response_text and cid not in cited_ids:
+                cited_ids.append(cid)
+
+    # Reject if candidate citations were found in the text but NONE were present in retrieved context
+    if matches and not cited_ids and valid_chunk_ids:
+        return False, "Invented citation absent from retrieved sources", []
 
     return True, None, cited_ids
 
@@ -121,12 +141,18 @@ def compose_response(
         cited_chunk_ids = pass1.get("cited_chunk_ids", [])
     else:
         raw_str = str(pass1)
-        grounded = "GROUNDING_GAP:" not in raw_str and bool(sanitize_text(raw_str))
-        answer_text = sanitize_text(raw_str) if grounded else ""
-        match = re.search(r'GROUNDING_GAP:\s*\[?([^\]\n]+)\]?', raw_str)
-        gap_topic = match.group(1).strip() if match else "Unspecified topic"
-        gaps = [gap_topic] if not grounded else []
-        cited_chunk_ids = []
+        if raw_str.strip().startswith("[LLM Error:") or "[LLM Error:" in raw_str:
+            grounded = False
+            answer_text = ""
+            gaps = ["LLM provider error"]
+            cited_chunk_ids = []
+        else:
+            grounded = "GROUNDING_GAP:" not in raw_str and bool(sanitize_text(raw_str))
+            answer_text = sanitize_text(raw_str) if grounded else ""
+            match = re.search(r'GROUNDING_GAP:\s*\[?([^\]\n]+)\]?', raw_str)
+            gap_topic = match.group(1).strip() if match else "Unspecified topic"
+            gaps = [gap_topic] if not grounded else []
+            cited_chunk_ids = []
 
     if grounded:
         return TutorAnswer(
@@ -137,7 +163,7 @@ def compose_response(
         )
     else:
         clean_pass2 = sanitize_text(pass2_text)
-        if not clean_pass2:
+        if not clean_pass2 or "[LLM Error:" in clean_pass2:
             clean_pass2 = "The uploaded course materials for this course do not currently cover this specific question."
         return TutorAnswer(
             grounded_answer="",

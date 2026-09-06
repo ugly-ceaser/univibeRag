@@ -51,6 +51,7 @@ class SQLAlchemyAssetRepository(AssetRepository):
             select(Document, MaterialAsset)
             .join(MaterialAsset, Document.material_asset_id == MaterialAsset.id)
             .where(Document.course_id == course_id)
+            .where(Document.student_id == student_id)
         )
         result = await self.session.execute(stmt)
         items = []
@@ -92,28 +93,34 @@ class SQLAlchemyVectorStore(VectorStore):
         self.session.add_all(chunk_records)
         await self.session.commit()
 
-    async def search_chunks(self, query_vector: list[float], course_id: str, top_k: int = 6) -> list[dict[str, Any]]:
+    async def search_chunks(self, query_vector: list[float], course_id: str, student_id: str | None = None, top_k: int = 6) -> list[dict[str, Any]]:
         # Vector similarity search using pgvector l2_distance or cosine_distance
-        # Filter chunks by documents linked to course_id
+        # Filter chunks by documents linked to course_id and student_id
+        dist_expr = Chunk.embedding.l2_distance(query_vector)
         stmt = (
-            select(Chunk, Document.id.label("document_id"), Document.filename)
+            select(Chunk, Document.id.label("document_id"), Document.filename, dist_expr.label("distance"))
             .join(MaterialAsset, Chunk.material_asset_id == MaterialAsset.id)
             .join(Document, Document.material_asset_id == MaterialAsset.id)
             .where(Document.course_id == course_id)
             .where(MaterialAsset.status == "ready")
-            .order_by(Chunk.embedding.l2_distance(query_vector))
-            .limit(top_k)
         )
+        if student_id:
+            stmt = stmt.where(Document.student_id == student_id)
+
+        stmt = stmt.order_by(dist_expr).limit(top_k)
         result = await self.session.execute(stmt)
         hits = []
         for row in result.all():
             chunk = row[0]
+            dist_val = float(row.distance) if len(row) > 3 and row[3] is not None else 0.5
+            similarity = max(0.0, min(1.0, 1.0 - (dist_val ** 2) / 2.0))
             hits.append({
                 "chunk_id": chunk.id,
                 "content": chunk.content,
                 "chunk_index": chunk.chunk_index,
                 "document_id": row.document_id,
                 "filename": row.filename,
+                "similarity": round(similarity, 4),
                 "metadata": chunk.extra_metadata or {}
             })
         return hits
