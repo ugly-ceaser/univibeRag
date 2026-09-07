@@ -13,7 +13,7 @@ from shared.interfaces import (
     MessageRepository, GapRepository, StudentProfileRepository
 )
 from ingestion.chunkers import HeaderAwareChunker
-from ingestion.parsers import PyTesseractOCREngine
+from ingestion.parsers import CompositeOCREngine
 from ingestion.repository import SQLAlchemyAssetRepository, SQLAlchemyVectorStore
 from tutor.repository import SQLAlchemyMessageRepository, SQLAlchemyGapRepository, SQLAlchemyStudentProfileRepository
 import os
@@ -26,7 +26,7 @@ _storage_instance = LocalStorage()
 _rate_limiter_instance = InMemoryRateLimiter()
 _cache_instance = InMemoryCache()
 _chunker_instance = HeaderAwareChunker()
-_ocr_instance = PyTesseractOCREngine()
+_ocr_instance = CompositeOCREngine()
 
 def get_storage() -> FileStorage:
     return _storage_instance

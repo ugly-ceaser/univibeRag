@@ -1,7 +1,11 @@
 import io
 import os
+import base64
+import logging
 from typing import Any
 from shared.interfaces import DocumentParser, RawDocument, OCREngine
+
+logger = logging.getLogger(__name__)
 
 class PDFParser(DocumentParser):
     def parse(self, file_bytes: bytes, mime_type: str, ocr_engine: OCREngine | None = None) -> RawDocument:
@@ -15,7 +19,7 @@ class PDFParser(DocumentParser):
 
         combined_text = "\n\n".join(pages_text)
         if not combined_text.strip() and ocr_engine is not None:
-            # Fallback to OCR if PDF contains images/no selectable text
+            # Fallback to OCR if PDF contains scanned images/no selectable text
             combined_text = ocr_engine.extract_text(file_bytes, mime_type)
 
         return RawDocument(
@@ -56,9 +60,11 @@ class ImageParser(DocumentParser):
             try:
                 text = ocr_engine.extract_text(file_bytes, mime_type)
             except Exception as e:
-                text = f"[OCR Failed: {str(e)}]"
-        else:
-            text = "[Image file uploaded - OCR engine not configured]"
+                logger.warning(f"OCR parsing exception: {str(e)}")
+                text = ""
+
+        if not text.strip() or text.startswith("[OCR"):
+            text = ""
 
         return RawDocument(
             filename="image.png",
@@ -78,7 +84,93 @@ class PyTesseractOCREngine(OCREngine):
             text = pytesseract.image_to_string(image)
             return text.strip()
         except Exception as e:
-            return f"[OCR Error: {str(e)}]"
+            logger.info(f"PyTesseract OCR fallback: {str(e)}")
+            return ""
+
+
+class GeminiVisionOCREngine(OCREngine):
+    """Vision-based OCR using Google Gemini multimodal model."""
+    def __init__(self, api_key: str | None = None):
+        from config import settings
+        self.api_key = api_key or settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+
+    def extract_text(self, file_bytes: bytes, mime_type: str) -> str:
+        if not self.api_key:
+            return ""
+        try:
+            import google.generativeai as genai
+            from PIL import Image
+
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            image = Image.open(io.BytesIO(file_bytes))
+            prompt = (
+                "Extract and transcribe all text, handwritten notes, tables, mathematical equations, "
+                "and key visual content from this course material image accurately and verbatim."
+            )
+            response = model.generate_content([image, prompt])
+            return (response.text or "").strip()
+        except Exception as e:
+            logger.warning(f"Gemini Vision OCR failed: {str(e)}")
+            return ""
+
+
+class OpenAIVisionOCREngine(OCREngine):
+    """Vision-based OCR using OpenAI GPT-4o vision capability."""
+    def __init__(self, api_key: str | None = None):
+        from config import settings
+        self.api_key = api_key or settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+
+    def extract_text(self, file_bytes: bytes, mime_type: str) -> str:
+        if not self.api_key:
+            return ""
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=self.api_key)
+            b64_image = base64.b64encode(file_bytes).decode('utf-8')
+            media_type = mime_type if mime_type.startswith("image/") else "image/png"
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Extract and transcribe all text, formulas, and written content from this image verbatim."},
+                            {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{b64_image}"}}
+                        ]
+                    }
+                ],
+                max_tokens=1500
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as e:
+            logger.warning(f"OpenAI Vision OCR failed: {str(e)}")
+            return ""
+
+
+class CompositeOCREngine(OCREngine):
+    """Tries Tesseract OCR first, then falls back to Gemini Vision or OpenAI Vision."""
+    def __init__(self, engines: list[OCREngine] | None = None):
+        if engines is not None:
+            self.engines = engines
+        else:
+            self.engines = [
+                PyTesseractOCREngine(),
+                GeminiVisionOCREngine(),
+                OpenAIVisionOCREngine()
+            ]
+
+    def extract_text(self, file_bytes: bytes, mime_type: str) -> str:
+        for engine in self.engines:
+            try:
+                extracted = engine.extract_text(file_bytes, mime_type)
+                if extracted and extracted.strip() and not extracted.startswith("[OCR"):
+                    logger.info(f"Successfully extracted OCR text using {engine.__class__.__name__}")
+                    return extracted.strip()
+            except Exception as e:
+                logger.debug(f"Engine {engine.__class__.__name__} failed: {str(e)}")
+        return ""
 
 
 def get_parser_for_filename(filename: str, mime_type: str = "") -> DocumentParser:

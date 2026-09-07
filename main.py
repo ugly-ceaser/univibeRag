@@ -135,9 +135,9 @@ async def mobile_course_chat(
     if answer.grounded_answer:
         content_parts.append(answer.grounded_answer)
     if answer.supplementary_answer:
-        content_parts.append(f"\n\n**Supplementary Info**:\n{answer.supplementary_answer}")
+        content_parts.append(answer.supplementary_answer)
     
-    full_response = "\n".join(content_parts) or "No response could be generated."
+    full_response = "\n\n".join(content_parts) or "No response could be generated."
     sources = answer.cited_chunk_ids or []
     is_grounded = bool(answer.grounded_answer and answer.grounded_answer.strip())
     if getattr(answer, "confidence", 0.0) > 0:
@@ -156,7 +156,8 @@ async def mobile_course_chat(
             "sources": sources,
             "suggestions": answer.gaps_addressed or [],
             "cached": False,
-            "model": settings.LLM_MODEL
+            "model": settings.LLM_MODEL,
+            "is_supplementary": bool(answer.supplementary_answer and not answer.grounded_answer)
         },
         "message": "Response generated successfully",
         "timestamp": datetime.now(timezone.utc).isoformat(),
