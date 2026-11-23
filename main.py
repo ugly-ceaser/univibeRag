@@ -8,7 +8,7 @@ from config import settings
 from core.database import init_db
 from core.security import get_current_user, AuthenticatedUser
 from shared.dependencies import get_message_repository
-from shared.interfaces import MessageRepository
+from shared.interfaces import MessageRepository, ProviderUnavailableError
 from ingestion.api import router as ingestion_router
 from tutor.api import router as tutor_router
 
@@ -62,12 +62,13 @@ app.include_router(tutor_router)
 from datetime import datetime, timezone
 from typing import Any
 from pydantic import BaseModel, Field
-from shared.dependencies import get_tutor_service
+from shared.dependencies import get_tutor_service, rate_limit
+from tutor.api import QUESTION_MAX_CHARS
 from tutor.service import TutorService
 
 class MobileAIChatRequest(BaseModel):
-    message: str
-    courseId: str
+    message: str = Field(..., min_length=1, max_length=QUESTION_MAX_CHARS)
+    courseId: str = Field(..., min_length=1, max_length=200)
     context: dict[str, Any] | None = None
     conversationHistory: list[dict[str, Any]] | None = None
     userMode: str | None = "balanced"
@@ -119,7 +120,7 @@ async def mobile_chat_session(
         "message": "Session history retrieved successfully"
     }
 
-@app.post("/ai/chat/course", tags=["mobile_alias"])
+@app.post("/ai/chat/course", tags=["mobile_alias"], dependencies=[Depends(rate_limit("ask"))])
 async def mobile_course_chat(
     body: MobileAIChatRequest,
     user: AuthenticatedUser = Depends(get_current_user),
@@ -178,15 +179,34 @@ async def mobile_delete_session(
     }
 
 # Global Exception Handlers
-@app.exception_handler(HTTPException)
-async def custom_http_exception_handler(request: Request, exc: HTTPException):
+@app.exception_handler(ProviderUnavailableError)
+async def provider_unavailable_handler(request: Request, exc: ProviderUnavailableError):
+    logger.error(f"AI provider unavailable on {request.method} {request.url.path}: {exc}")
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "60"},
         content={
             "error": True,
-            "status_code": exc.status_code,
-            "detail": exc.detail
+            "status_code": 503,
+            "detail": "The AI tutor is temporarily unavailable. Please try again shortly."
         }
+    )
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    content = {
+        "error": True,
+        "status_code": exc.status_code,
+        "detail": exc.detail
+    }
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is not None:
+        content["retryAfter"] = retry_after
+    return JSONResponse(
+        status_code=exc.status_code,
+        # Preserve headers such as Retry-After (429) and WWW-Authenticate (401).
+        headers=getattr(exc, "headers", None),
+        content=content
     )
 
 @app.exception_handler(Exception)

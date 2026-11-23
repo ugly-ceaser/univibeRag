@@ -1,7 +1,7 @@
 import os
 import random
 from typing import Any
-from shared.interfaces import ChatModel, Embedder, TutorResponse
+from shared.interfaces import ChatModel, Embedder, TutorResponse, ProviderUnavailableError
 
 class MockEmbedder(Embedder):
     """Deterministic mock embedder generating 1536-dim normalized vectors for testing."""
@@ -165,7 +165,7 @@ class OpenAIEmbedder(Embedder):
             res = client.embeddings.create(input=texts, model="text-embedding-3-small")
             return [data.embedding for data in res.data]
         except Exception as e:
-            raise RuntimeError(f"OpenAI embedding provider error: {str(e)}")
+            raise ProviderUnavailableError(f"OpenAI embedding provider error: {str(e)}") from e
 
 
 class GeminiEmbedder(Embedder):
@@ -190,5 +190,5 @@ class GeminiEmbedder(Embedder):
             )
             return result['embedding']
         except Exception as e:
-            raise RuntimeError(f"Gemini embedding provider error: {str(e)}")
+            raise ProviderUnavailableError(f"Gemini embedding provider error: {str(e)}") from e
 

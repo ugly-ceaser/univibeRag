@@ -2,6 +2,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, Field
 
+from config import settings
 from core.security import get_current_user, AuthenticatedUser
 from shared.dependencies import (
     get_asset_repository,
@@ -9,7 +10,8 @@ from shared.dependencies import (
     get_file_storage,
     get_embedder,
     get_chunker,
-    get_ocr_engine
+    get_ocr_engine,
+    rate_limit
 )
 from shared.interfaces import AssetRepository, VectorStore, FileStorage, Embedder, ChunkingStrategy, OCREngine
 from ingestion.pipeline import process_asset_background
@@ -28,14 +30,16 @@ class MaterialResponse(BaseModel):
     status_code=status.HTTP_202_ACCEPTED,
     response_model=MaterialResponse,
     summary="Upload Course Material",
-    description="Uploads a PDF, DOCX, TXT, or Image file for background parsing, header-aware chunking, vector embedding, and indexing."
+    description="Uploads a PDF, DOCX, TXT, or Image file for background parsing, header-aware chunking, vector embedding, and indexing.",
+    dependencies=[Depends(rate_limit("upload"))]
 )
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=MaterialResponse,
     summary="Upload Course Material Alias",
-    include_in_schema=False
+    include_in_schema=False,
+    dependencies=[Depends(rate_limit("upload"))]
 )
 async def upload_course_material(
     course_id: str,
@@ -52,7 +56,18 @@ async def upload_course_material(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is missing")
 
-    file_bytes = await file.read()
+    max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
+    too_large = HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=f"File exceeds the {settings.MAX_UPLOAD_MB} MB upload limit."
+    )
+    # Reject on declared size first, then read at most max_bytes + 1 so an
+    # undeclared/lying size can't make us buffer an arbitrarily large file.
+    if file.size is not None and file.size > max_bytes:
+        raise too_large
+    file_bytes = await file.read(max_bytes + 1)
+    if len(file_bytes) > max_bytes:
+        raise too_large
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 

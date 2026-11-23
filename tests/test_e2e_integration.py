@@ -1,7 +1,7 @@
 import uuid
 import jwt
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 from config import settings
 from main import app
@@ -10,7 +10,8 @@ from shared.dependencies import (
     get_asset_repository,
     get_vector_store,
     get_message_repository,
-    get_gap_repository
+    get_gap_repository,
+    get_student_profile_repository
 )
 
 class InMemoryAssetRepository(AssetRepository):
@@ -137,6 +138,10 @@ def override_dependencies():
     app.dependency_overrides[get_vector_store] = lambda: vector_store
     app.dependency_overrides[get_message_repository] = lambda: message_repo
     app.dependency_overrides[get_gap_repository] = lambda: gap_repo
+    # Profile repo previously fell through to the real Postgres session.
+    profile_repo = AsyncMock()
+    profile_repo.get_profile.return_value = None
+    app.dependency_overrides[get_student_profile_repository] = lambda: profile_repo
 
     yield
 

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_PER_MIN: int = 5
     RATE_LIMIT_ASK_PER_MIN: int = 15
 
+    # Upload size cap (enforced in the upload route; also set a body limit at the reverse proxy)
+    MAX_UPLOAD_MB: int = 20
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

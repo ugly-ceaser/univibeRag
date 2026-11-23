@@ -1,8 +1,9 @@
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable, Awaitable
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 
 from core.database import get_db
+from core.security import get_current_user, AuthenticatedUser
 from core.storage import LocalStorage
 from core.rate_limiter import InMemoryRateLimiter
 from core.cache import InMemoryCache
@@ -33,6 +34,51 @@ def get_storage() -> FileStorage:
 
 def get_rate_limiter() -> RateLimiter:
     return _rate_limiter_instance
+
+RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+class RateLimitExceeded(HTTPException):
+    """429 that also carries `retry_after` so the error handler can put it in the JSON body.
+    The app reads `retryAfter` from the body first, because on web the Retry-After header
+    can be hidden by CORS."""
+
+    def __init__(self, detail: str, retry_after: int):
+        super().__init__(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=detail,
+            headers={"Retry-After": str(retry_after)},
+        )
+        self.retry_after = retry_after
+
+# Per-student limits, read lazily so .env / settings changes apply without code edits.
+# "ask" is one shared bucket for every route that triggers LLM calls
+# (/courses/{id}/ask and the mobile /ai/chat/course alias), so a client can't
+# double its budget by alternating routes.
+_RATE_LIMITS: dict[str, tuple[Callable[[], int], str]] = {
+    "ask": (lambda: settings.RATE_LIMIT_ASK_PER_MIN, "questions"),
+    "upload": (lambda: settings.RATE_LIMIT_UPLOAD_PER_MIN, "uploads"),
+}
+
+def rate_limit(kind: str) -> Callable[..., Awaitable[None]]:
+    """Route dependency enforcing the per-student, per-minute limit for `kind`. Raises 429."""
+    get_limit, noun = _RATE_LIMITS[kind]
+
+    async def _enforce(
+        user: AuthenticatedUser = Depends(get_current_user),
+        limiter: RateLimiter = Depends(get_rate_limiter),
+    ) -> None:
+        limit = get_limit()
+        is_limited, _ = await limiter.is_rate_limited(
+            f"rate:{kind}:{user.id}", limit=limit, window_seconds=RATE_LIMIT_WINDOW_SECONDS
+        )
+        if is_limited:
+            raise RateLimitExceeded(
+                detail=f"Rate limit exceeded: max {limit} {noun} per minute. Please try again shortly.",
+                retry_after=RATE_LIMIT_WINDOW_SECONDS,
+            )
+
+    return _enforce
 
 def get_cache() -> CacheClient:
     return _cache_instance

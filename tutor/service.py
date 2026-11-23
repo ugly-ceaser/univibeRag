@@ -1,3 +1,4 @@
+import asyncio
 import re
 from typing import Any
 from shared.interfaces import (
@@ -150,7 +151,9 @@ class TutorService:
             )
 
         # Step 1: Embed question
-        question_vector = self.embedder.embed(question)
+        # Provider SDK calls are synchronous; run them in a worker thread so they
+        # don't block the event loop (and every other request) while waiting on the network.
+        question_vector = await asyncio.to_thread(self.embedder.embed, question)
 
         # Step 2: Retrieve relevant chunks & chat history
         context_chunks = await self.vector_store.search_chunks(question_vector, course_id=course_id, student_id=student_id, top_k=6)
@@ -158,7 +161,7 @@ class TutorService:
 
         # Step 3: Pass 1 Completion
         messages = build_tutor_messages(question, context_chunks, chat_history, student_name=preferred_name)
-        pass1_raw = self.chat_model.complete(messages, response_schema=TutorResponse)
+        pass1_raw = await asyncio.to_thread(self.chat_model.complete, messages, response_schema=TutorResponse)
 
         # Convert pass1_raw to TutorResponse
         if isinstance(pass1_raw, TutorResponse):
@@ -188,7 +191,7 @@ class TutorService:
         if not pass1_res.grounded:
             gaps = pass1_res.gaps or [question[:50]]
             pass2_msgs = build_pass2_messages(question, gaps)
-            pass2_raw = self.chat_model.complete(pass2_msgs, max_tokens=150)
+            pass2_raw = await asyncio.to_thread(self.chat_model.complete, pass2_msgs, max_tokens=150)
             if isinstance(pass2_raw, dict):
                 raw_content = str(pass2_raw.get("content", pass2_raw))
             else:

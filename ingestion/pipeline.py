@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 from shared.interfaces import AssetRepository, VectorStore, FileStorage, Embedder, ChunkingStrategy, OCREngine
@@ -22,7 +23,9 @@ async def process_asset_background(
         # Step 1: Parsing
         await asset_repo.update_status(asset_id, "parsing")
         parser = get_parser_for_filename(filename, mime_type)
-        raw_doc = parser.parse(file_bytes, mime_type, ocr_engine=ocr_engine)
+        # Parsing/OCR is CPU-bound and embedding is a blocking network call:
+        # run both off the event loop so ingestion doesn't stall live tutor requests.
+        raw_doc = await asyncio.to_thread(parser.parse, file_bytes, mime_type, ocr_engine=ocr_engine)
 
         if not raw_doc.text_content.strip():
             await asset_repo.update_status(asset_id, "failed", error_message="Extracted text content was empty.")
@@ -31,7 +34,7 @@ async def process_asset_background(
         # Step 2: Embedding & Chunking
         await asset_repo.update_status(asset_id, "embedding")
         chunks = chunk_document(raw_doc, chunker)
-        chunks_with_vectors = attach_vectors(chunks, embedder)
+        chunks_with_vectors = await asyncio.to_thread(attach_vectors, chunks, embedder)
 
         # Step 3: Vector Storage
         await vector_store.upsert_chunks(asset_id, chunks_with_vectors)

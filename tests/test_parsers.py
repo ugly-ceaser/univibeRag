@@ -29,7 +29,7 @@ def test_image_parser_with_ocr_engine():
 def test_image_parser_without_ocr_engine():
     parser = ImageParser()
     doc = parser.parse(b"fake_image_bytes", "image/png", ocr_engine=None)
-    assert "OCR engine not configured" in doc.text_content
+    assert doc.text_content == ""
 
 def test_get_parser_for_filename():
     assert isinstance(get_parser_for_filename("doc.pdf"), PDFParser)

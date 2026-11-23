@@ -7,38 +7,32 @@ from shared.dependencies import (
     get_tutor_service,
     get_message_repository,
     get_gap_repository,
-    get_rate_limiter
+    rate_limit
 )
-from shared.interfaces import MessageRepository, GapRepository, RateLimiter, TutorAnswer
+from shared.interfaces import MessageRepository, GapRepository, TutorAnswer
 from tutor.service import TutorService
 
 router = APIRouter(prefix="/courses/{course_id}", tags=["tutor"])
 
+# Bounds prompt size (and therefore LLM token spend) per question. Shared with the mobile alias route.
+QUESTION_MAX_CHARS = 1000
+
 class QuestionRequest(BaseModel):
-    question: str = Field(..., min_length=2, max_length=1000, description="Question asked by the student")
+    question: str = Field(..., min_length=2, max_length=QUESTION_MAX_CHARS, description="Question asked by the student")
 
 @router.post(
     "/ask",
     response_model=TutorAnswer,
     summary="Ask AI Tutor",
-    description="Submits a student question to the RAG pipeline. Performs vector search on course materials, enforces strict grounding, extracts citations, and identifies missing topic gaps."
+    description="Submits a student question to the RAG pipeline. Performs vector search on course materials, enforces strict grounding, extracts citations, and identifies missing topic gaps.",
+    dependencies=[Depends(rate_limit("ask"))]
 )
 async def ask_course_tutor(
     course_id: str,
     body: QuestionRequest,
     user: AuthenticatedUser = Depends(get_current_user),
-    tutor_service: TutorService = Depends(get_tutor_service),
-    rate_limiter: RateLimiter = Depends(get_rate_limiter)
+    tutor_service: TutorService = Depends(get_tutor_service)
 ):
-    # Enforce rate limiting: max 20 questions per minute per student
-    rate_key = f"rate:ask:{user.id}"
-    is_limited, retry_after = await rate_limiter.is_rate_limited(rate_key, limit=20, window_seconds=60)
-    if is_limited:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Please try again in {retry_after} seconds."
-        )
-
     answer = await tutor_service.ask_tutor(
         course_id=course_id,
         student_id=user.id,

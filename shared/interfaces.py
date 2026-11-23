@@ -2,6 +2,12 @@ from typing import Protocol, Any, runtime_checkable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+
+class ProviderUnavailableError(RuntimeError):
+    """Raised when an upstream AI provider (embeddings/LLM) cannot serve a request,
+    e.g. quota exhausted, auth failure, network error. Mapped to HTTP 503 by the API."""
+
+
 @dataclass
 class RawDocument:
     filename: str
