@@ -11,3 +11,6 @@ ENV/
 env/
 .vscode/
 .idea/
+
+# Uploaded course materials (student content, never committed)
+media_storage/
